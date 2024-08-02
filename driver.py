@@ -2,12 +2,17 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 import os
+import json
+
+with open('config.json', 'r') as file:
+    config = json.load(file)
+
 os.environ['FFMPEG_LOG_LEVEL'] = 'quiet'
 
 def newDriver(headless=False):
     options = Options()
 
-    options.binary_location = "chrome/chrome.exe"
+    options.binary_location = config['path']['chrome']
 
     if headless:
         options.add_argument("--headless")
@@ -40,6 +45,6 @@ def newDriver(headless=False):
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--ignore-ssl-errors")
 
-    driver = webdriver.Chrome(service=Service("chromedriver/chromedriver.exe", log_output="chromedriver.log"), options=options)
+    driver = webdriver.Chrome(service=Service(config['path']['chromedriver'], log_output="chromedriver.log"), options=options)
     return driver
 
