@@ -48,4 +48,3 @@ def newDriver(headless=True):
     driver = webdriver.Chrome(service=Service(config['path']['chromedriver'], log_output="chromedriver.log"), options=options)
     #driver = webdriver.Chrome(service=Service(ChromeDriverManager().install(), log_output="chromedriver.log"), options=options)
     return driver
-

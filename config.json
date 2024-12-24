@@ -1,6 +1,4 @@
 {
     "path": {
-        "chromedriver": "chromedriver/chromedriver.exe",
-        "chrome": "chrome/chrome.exe"
     }
 }
