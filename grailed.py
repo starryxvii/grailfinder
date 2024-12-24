@@ -1,5 +1,5 @@
-import spacy
 from driver import new_driver
+from similarity import score_similarity
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support.ui import Select
 from selenium.webdriver.common.by import By
@@ -13,31 +13,12 @@ import pandas as pd
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-# Load the spaCy model
-nlp = spacy.load("en_core_web_md")
-
-def extract_important_text(text):
-    doc = nlp(text.lower())
-    return " ".join(token.text for token in doc if token.pos_ in ["NOUN", "PROPN", "NUM"])
-
-def score_similarity(a, b):
-    doc1 = nlp(extract_important_text(a))
-    doc2 = nlp(extract_important_text(b))
-    similarity = doc1.similarity(doc2)
-
-    # Penalize mismatched numbers
-    numbers_a = set(token.text for token in doc1 if token.like_num)
-    numbers_b = set(token.text for token in doc2 if token.like_num)
-    if numbers_a != numbers_b:
-        similarity -= 0.3
-
-    return max(0, similarity)
 
 def query(q, headless=False):
     start_time = time.time()
     logging.info("Started Grailed job, initializing browser")
     driver = new_driver(headless)
-    logging.info("Browser ready")
+    logging.debug("Browser ready")
     listings = pd.DataFrame(columns=["title", "brand", "price", "size", "url"])
 
     def waitForElement(by, q):
@@ -54,23 +35,23 @@ def query(q, headless=False):
         WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
         searchButton = waitForElement(By.XPATH, '//*[@id="globalHeaderWrapper"]/div/div[1]/form/button')
         searchButton.click()
-        logging.info("Clicked on the search button to prompt modal.")
-        driver.execute_script("var modals = document.querySelectorAll('.ReactModal__Content--after-open, .modal, .Modal-module__authenticationModal___g7Ufu'); if (modals.length > 0) { modals.forEach(modal => { if (modal.style.display != 'none') { modal.style.display = 'none'; console.log('Modal closed'); }});}")
-        logging.info("Modals handled.")
+        logging.debug("Clicked on the search button to prompt modal.")
+        driver.execute_script("var modals = document.querySelectorAll('.ReactModal__Content--after-open, .modal, .Modal-module__authenticationModal___g7Ufu'); if (modals.length > 0) { modals.forEach(modal => { if (modal.style.display != 'none') { modal.style.display = 'none'; console.debug('Modal closed'); }});}")
+        logging.debug("Modals handled.")
         searchBox = waitForElement(By.XPATH, '//*[@id="header_search-input"]')
         searchBox.send_keys(q)
         searchBox.send_keys(Keys.ARROW_DOWN)
         correctedText = searchBox.get_attribute("value")
         searchBox.send_keys(Keys.ENTER)
-        logging.info(f"Searched for: {correctedText}")
+        logging.debug(f"Searched for: {correctedText}")
 
         while True:
             filter = Select(waitForElement(By.CLASS_NAME, 'ais-SortBy-select'))
             filter.select_by_value("Listing_by_low_price_production")
-            logging.info("Set filter to sort by low price.")
+            logging.debug("Set filter to sort by low price.")
             try:
                 feed = WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'feed-item') and not(contains(@class, 'empty-item'))]")))
-                logging.info(f"Indexing through {len(feed)} items of \"{correctedText}\".")
+                logging.debug(f"Indexing through {len(feed)} items of \"{correctedText}\".")
                 initial_len = len(listings)
 
                 for item in feed:
@@ -85,7 +66,7 @@ def query(q, headless=False):
                         price = int(item.find_element(By.XPATH, ".//div/div/span[1]").text.lstrip("$").replace(',', ''))
                         size = item.find_element(By.XPATH, ".//div[3]/div[1]/p[2]").text
                         url = item.find_element(By.XPATH, ".//a").get_attribute('href')
-                        listings = pd.concat([listings, pd.DataFrame([{"title": title, "brand": brand, "price": price, "size": size, "url": url}])], ignore_index=True)
+                        listings = pd.concat([listings, pd.DataFrame([{"title": title, "price": price, "size": size, "url": url}])], ignore_index=True)
 
                 if len(listings) < 5 and len(feed) > 0:
                     scroll_down()
@@ -100,9 +81,9 @@ def query(q, headless=False):
         driver.quit()
         elapsed_time = time.time() - start_time
         logging.info(f"Finished Grailed job in {elapsed_time:.2f}s.")
-        return listings if not listings.empty else pd.DataFrame(columns=["title", "brand", "price", "size", "url"])
+        return listings if not listings.empty else pd.DataFrame(columns=["title", "price", "size", "url"])
 
 # Example usage
-df = query("jordan 4 black cat", True)
+df = query("rick owens geobasket", True)
 df.to_csv('results.csv', index=False)
 logging.info("Results saved to CSV file.")

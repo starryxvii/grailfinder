@@ -2,7 +2,11 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
-import os, json
+import os, json, logging
+import coloredlogs
+coloredlogs.install()
+
+logging.getLogger("WDM").setLevel(logging.ERROR)
 
 with open('config.json', 'r') as file:
     config = json.load(file)
