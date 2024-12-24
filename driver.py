@@ -9,7 +9,7 @@ with open('config.json', 'r') as file:
 
 os.environ['FFMPEG_LOG_LEVEL'] = 'quiet'
 
-def newDriver(headless=True):
+def new_driver(headless=True):
     options = Options()
 
     #options.binary_location = config['path']['chrome']
@@ -32,7 +32,7 @@ def newDriver(headless=True):
     options.add_argument("--disable-gpu")  # Disable GPU hardware acceleration
     options.add_argument("--disable-extensions")  # Disable extensions
     options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
-    
+    options.add_argument("--enable-unsafe-swiftshader")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     
     # Suppress console logs
@@ -45,6 +45,10 @@ def newDriver(headless=True):
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--ignore-ssl-errors")
 
-    driver = webdriver.Chrome(service=Service(config['path']['chromedriver'], log_output="chromedriver.log"), options=options)
-    #driver = webdriver.Chrome(service=Service(ChromeDriverManager().install(), log_output="chromedriver.log"), options=options)
-    return driver
+    driver_path = config['path'].get('chromedriver', None)
+    if driver_path:
+        service = Service(driver_path)
+    else:
+        service = Service(ChromeDriverManager().install())
+
+    return webdriver.Chrome(service=service, options=options)
