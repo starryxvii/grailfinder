@@ -1,50 +1,100 @@
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-import os, json
+import spacy
+from driver import newDriver
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import Select
+from selenium.common.exceptions import StaleElementReferenceException
+import time, logging, pandas as pd
 
-with open('config.json', 'r') as file:
-    config = json.load(file)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-os.environ['FFMPEG_LOG_LEVEL'] = 'quiet'
+# Load the spaCy model
+nlp = spacy.load('en_core_web_md')
 
-def newDriver(headless=True):
-    options = Options()
+def extract_important_text(text):
+    doc = nlp(text.lower())
+    keywords = ' '.join(token.text for token in doc if token.pos_ in ['NOUN', 'PROPN', 'NUM'])
+    return keywords
 
-    #options.binary_location = config['path']['chrome']
+def score_similarity(a, b):
+    doc1 = nlp(extract_important_text(a))
+    doc2 = nlp(extract_important_text(b))
+    similarity = doc1.similarity(doc2)
 
-    if headless:
-        options.add_argument("--headless")
-        options.add_argument("--window-size=1920,1080")
+    # Extract numbers to enforce model number accuracy
+    numbers_a = set(token.text for token in doc1 if token.like_num)
+    numbers_b = set(token.text for token in doc2 if token.like_num)
+    if numbers_a != numbers_b:
+        similarity -= 0.3  # Penalize if numbers do not match, significant in product model differentiation
+
+    return max(0, similarity)  # Ensure similarity does not go negative
+
+def query(q, headless=False):
+    start_time = time.time()
+    logging.info("Started Grailed job, initializing browser")
+    driver = newDriver(headless)
+    logging.info("Browser ready")
+    listings = pd.DataFrame(columns=["title", "price", "size", "url"])
     
-    #options.add_argument("--start-maximized")
-    options.add_argument("--remote-debugging-pipe")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.9999.99 Safari/537.36")
-    
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--disable-popup-blocking")
-    options.add_argument("--enable-javascript")
+    def waitForElement(by, q):
+        return WebDriverWait(driver, 30).until(EC.presence_of_element_located((by, q)))
 
-    options.add_argument("--no-sandbox")  # Bypass OS security model, speeds up the setup on Linux
-    options.add_argument("--disable-gpu")  # Disable GPU hardware acceleration
-    options.add_argument("--disable-extensions")  # Disable extensions
-    options.add_argument("--disable-dev-shm-usage")  # Overcome limited resource problems
-    
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    
-    # Suppress console logs
-    options.add_argument("--log-level=3")
-    options.add_argument("--silent")
+    def scroll_down():
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)  # Wait for the page to load more items
 
-    options.add_experimental_option("detach", True)
+    try:
+        driver.get("https://grailed.com")
+        logging.info("Opened Grailed website")
+        WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+        searchButton = waitForElement(By.XPATH, '//*[@id="globalHeaderWrapper"]/div/div[1]/form/button')
+        searchButton.click()
+        logging.info("Clicked on the search button to prompt modal.")
+        driver.execute_script("var modals = document.querySelectorAll('.ReactModal__Content--after-open, .modal, .Modal-module__authenticationModal___g7Ufu'); if (modals.length > 0) { modals.forEach(modal => { if (modal.style.display !== 'none') { modal.style.display = 'none'; console.log('Modal closed'); }});}")
+        logging.info("Modals handled.")
+        searchBox = waitForElement(By.XPATH, '//*[@id="header_search-input"]')
+        searchBox.send_keys(q)
+        searchBox.send_keys(Keys.ARROW_DOWN)
+        correctedText = searchBox.get_attribute("value")
+        searchBox.send_keys(Keys.ENTER)
+        logging.info(f"Searched for: {correctedText}")
 
-    # Ignore SSL errors
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--ignore-ssl-errors")
+        while True:
+            filter = Select(waitForElement(By.CLASS_NAME, 'ais-SortBy-select'))
+            filter.select_by_value("Listing_by_low_price_production")
+            logging.info("Set filter to sort by low price.")
+            try:
+                feed = WebDriverWait(driver, 30).until(EC.presence_of_all_elements_located((By.XPATH, "//div[contains(@class, 'feed-item') and not(contains(@class, 'empty-item'))]")))
+                logging.info(f"Indexing through {len(feed)} items of \"{correctedText}\".")
 
-    driver = webdriver.Chrome(service=Service(config['path']['chromedriver'], log_output="chromedriver.log"), options=options)
-    #driver = webdriver.Chrome(service=Service(ChromeDriverManager().install(), log_output="chromedriver.log"), options=options)
-    return driver
+                for item in feed:
+                    title = item.find_element(By.XPATH, f".//div[3]/div[2]/p").text
+                    if score_similarity(title, correctedText) >= 0.85:
+                        price = int(item.find_element(By.XPATH, ".//div/div/span[1]").text.lstrip("$").replace(',', ''))
+                        size = item.find_element(By.XPATH, ".//div[3]/div[1]/p[2]").text
+                        url = item.find_element(By.XPATH, ".//a").get_attribute('href')
+                        listings = pd.concat([listings, pd.DataFrame([{"title": title, "price": price, "size": size, "url": url}])], ignore_index=True)
+                        if len(listings) >= 5:
+                            break
+
+                if len(listings) < 5:
+                    scroll_down()
+                else:
+                    break
+            except StaleElementReferenceException:
+                logging.warning("Detected stale element reference, refreshing the page.")
+                continue
+
+    finally:
+        driver.quit()
+        elapsed_time = time.time() - start_time
+        logging.info(f"Finished Grailed job in {elapsed_time:.2f}s.")
+        return listings if not listings.empty else pd.DataFrame(columns=["title", "price", "size", "url"])
+
+# Example usage
+df = query("yeezy slides", True)
+df.to_csv('results.csv', index=False)
+logging.info("Results saved to CSV file.")
